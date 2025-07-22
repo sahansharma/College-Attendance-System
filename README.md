@@ -159,3 +159,7 @@ Project Link: [https://github.com/your-username/college-attendance-system](https
 - Add a `requirements.txt` file in the `api` folder with Django and other dependencies.
 - Create a `docs` folder with a `user-guide.md` for detailed usage instructions if needed.
 - Adjust the license and contact details as per your preference.
+---
+
+<img width="1155" height="599" alt="image" src="https://github.com/user-attachments/assets/b8314ccb-6970-4a80-a557-70edb4030156" />
+
