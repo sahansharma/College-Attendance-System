@@ -1,5 +1,3 @@
-<img src="student_images/logo.png" alt="College Attendance System Logo" width="100" height="100">
-
 # College Attendance System
 
 A modern, web-based attendance management system for academic institutions, built with React, Django, and Tailwind CSS.
