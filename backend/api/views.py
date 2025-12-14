@@ -33,22 +33,22 @@ class RegisterView(APIView):
     def post(self, request):
         # Extract only the necessary fields for the UserSerializer
         user_data = {
-            'name': request.data.get('first_name'),  # ⚠️ Change this if `name` is not in serializer
+            'name': request.data.get('first_name'),
             'username': request.data.get('username'),
             'password': request.data.get('password')
         }
         print("🔧 Data to UserSerializer:")
-        print(user_data)  # ✅ Print the extracted user data
+        print(user_data)
 
         # Validate and save the user data
         user_serializer = UserSerializer(data=user_data)
         if not user_serializer.is_valid():
-            print("❌ UserSerializer errors:")
-            print(user_serializer.errors)  # ✅ Print user serializer errors
+            print("UserSerializer errors:")
+            print(user_serializer.errors)
             return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         user = user_serializer.save()
-        print("✅ User created successfully:")
+        print("User created successfully:")
         print(user)
 
         # Prepare student data
@@ -63,24 +63,24 @@ class RegisterView(APIView):
                 ext = format.split('/')[-1]
                 img_data = ContentFile(base64.b64decode(imgstr), name=f'user_{user.id}.{ext}')
                 student_data['student_img'] = img_data
-                print("🖼️ Image successfully decoded and converted to file.")
+                print("Image successfully decoded and converted to file.")
             except Exception as e:
-                print("❌ Error decoding base64 image:")
+                print("Error decoding base64 image:")
                 print(str(e))
                 return Response({'error': 'Invalid image format'}, status=status.HTTP_400_BAD_REQUEST)
 
-        print("🧾 Final student_data to be validated:")
-        print(student_data)  # ✅ Final student data before serialization
+        print("Final student_data to be validated:")
+        print(student_data)
 
         # Validate and save the student data
         student_serializer = StudentSerializer(data=student_data, context={'request': request})
         if not student_serializer.is_valid():
-            print("❌ StudentSerializer errors:")
-            print(student_serializer.errors)  # ✅ Print student serializer errors
+            print("StudentSerializer errors:")
+            print(student_serializer.errors)
             return Response(student_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         student = student_serializer.save()
-        print("✅ Student created successfully:")
+        print("Student created successfully:")
         print(student)
 
         # Combine the response data
@@ -89,7 +89,7 @@ class RegisterView(APIView):
             'student': student_serializer.data
         }
 
-        print("✅ All data saved. Sending final response.")
+        print("All data saved. Sending final response.")
         return Response(response_data, status=status.HTTP_201_CREATED)
 
     
