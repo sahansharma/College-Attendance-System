@@ -352,18 +352,41 @@ class AttendanceReportView(View):
 @method_decorator(csrf_exempt, name="dispatch")
 class AttendanceExportView(View):
     def post(self, request):
-        data = json.loads(request.body)
-        class_id = data.get("classId")
-        start_date = data.get("startDate")
-        end_date = data.get("endDate")
-        attendance_records = Attendance.objects.filter(
-            class_id=class_id,
-            date__range=[start_date, end_date]
-        )
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = 'attachment; filename="attendance_report.csv"'
-        writer = csv.writer(response)
-        writer.writerow(["Student", "Class", "Date", "Status"])
-        for record in attendance_records:
-            writer.writerow([record.student.user.username, record.class_id.name, record.date, record.status])
-        return response
+        try:
+            data = json.loads(request.body)
+            class_id = data.get("classId")
+            start_date_str = data.get("startDate")
+            end_date_str = data.get("endDate")
+
+            if not all([class_id, start_date_str, end_date_str]):
+                return JsonResponse({"error": "Missing parameters"}, status=400)
+
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+            
+            class_obj = Class.objects.get(class_id=class_id)
+            students = Student.objects.filter(student_class=class_obj)
+            attendance_records = Attendance.objects.filter(
+                student__in=students,
+                date_time__date__range=[start_date, end_date]
+            )
+
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = 'attachment; filename="attendance_report.csv"'
+            writer = csv.writer(response)
+            writer.writerow(["Student Name", "Class", "Date", "Status"])
+            
+            for record in attendance_records:
+                writer.writerow([
+                    f"{record.student.first_name} {record.student.last_name}",
+                    f"{class_obj.name} - {class_obj.section}",
+                    record.date_time.strftime("%Y-%m-%d"),
+                    record.status
+                ])
+            return response
+        except Class.DoesNotExist:
+            return JsonResponse({"error": "Class not found"}, status=404)
+        except ValueError:
+            return JsonResponse({"error": "Invalid date format"}, status=400)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
