@@ -1,18 +1,19 @@
+from typing import Dict, Any
 from rest_framework import serializers
 from .models import User, Role, Admin, Student, Class, Attendance
 
-class RoleSerializer(serializers.ModelSerializer):
+class RoleSerializer(serializers.ModelSerializer[Role]):
     class Meta:
         model = Role
         fields = ['id', 'name']
 
-class UserSerializer(serializers.ModelSerializer):
+class UserSerializer(serializers.ModelSerializer[User]):
     class Meta:
         model = User
         fields = ['id', 'name', 'username', 'password']
         extra_kwargs = {'password': {'write_only': True}}
 
-    def create(self, validated_data):
+    def create(self, validated_data: Dict[str, Any]) -> User:
         password = validated_data.pop('password', None)
         user = User.objects.create(**validated_data)
         if password is not None:
@@ -20,7 +21,7 @@ class UserSerializer(serializers.ModelSerializer):
         user.save()
         return user
 
-class AdminSerializer(serializers.ModelSerializer):
+class AdminSerializer(serializers.ModelSerializer[Admin]):
     user = UserSerializer()
     role = RoleSerializer()
 
@@ -28,7 +29,7 @@ class AdminSerializer(serializers.ModelSerializer):
         model = Admin
         fields = ['user', 'role', 'first_name', 'last_name']
 
-    def create(self, validated_data):
+    def create(self, validated_data: Dict[str, Any]) -> Admin:
         user_data = validated_data.pop('user')
         role_data = validated_data.pop('role')
         user = User.objects.create(**user_data)
@@ -36,12 +37,12 @@ class AdminSerializer(serializers.ModelSerializer):
         admin = Admin.objects.create(user=user, role=role, **validated_data)
         return admin
 
-class ClassSerializer(serializers.ModelSerializer):
+class ClassSerializer(serializers.ModelSerializer[Class]):
     class Meta:
         model = Class
         fields = ['class_id', 'name', 'section', 'semester', 'year']
 
-class StudentSerializer(serializers.ModelSerializer):
+class StudentSerializer(serializers.ModelSerializer[Student]):
     user = UserSerializer(read_only=True)
     student_class = ClassSerializer(read_only=True)
     student_img = serializers.ImageField(required=False)
@@ -50,7 +51,7 @@ class StudentSerializer(serializers.ModelSerializer):
         model = Student
         fields = ['user', 'first_name', 'middle_name', 'last_name', 'student_class', 'student_img']
 
-    def create(self, validated_data):
+    def create(self, validated_data: Dict[str, Any]) -> Student:
         student_class_data = validated_data.pop('student_class', {})
         user = validated_data.pop('user')
         
@@ -73,14 +74,14 @@ class StudentSerializer(serializers.ModelSerializer):
         )
         return student
 
-class AttendanceSerializer(serializers.ModelSerializer):
+class AttendanceSerializer(serializers.ModelSerializer[Attendance]):
     student = UserSerializer(read_only=True)
 
     class Meta:
         model = Attendance
         fields = ['id', 'student', 'status', 'date_time']
 
-    def create(self, validated_data):
+    def create(self, validated_data: Dict[str, Any]) -> Attendance:
         student_data = validated_data.pop('student')
         student = Student.objects.get(user_id=student_data['user'])
         attendance = Attendance.objects.create(student=student, **validated_data)
