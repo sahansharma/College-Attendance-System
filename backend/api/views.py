@@ -3,6 +3,7 @@ import os
 import json
 import base64
 from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, Optional, List
 
 # Third-party libraries
 import jwt
@@ -11,12 +12,11 @@ import numpy as np
 import face_recognition
 
 # Django imports
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpRequest
 from django.shortcuts import get_object_or_404
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from django.utils import timezone
 from django.core.files.base import ContentFile
 
 # Django REST framework imports
@@ -30,9 +30,9 @@ from .models import User, Role, Admin, Student, Class, Attendance
 from .serializers import UserSerializer, RoleSerializer, AdminSerializer, StudentSerializer, ClassSerializer, AttendanceSerializer
 
 class RegisterView(APIView):
-    def post(self, request):
+    def post(self, request: HttpRequest) -> Response:
         # Extract only the necessary fields for the UserSerializer
-        user_data = {
+        user_data: Dict[str, Any] = {
             'name': request.data.get('first_name'),
             'username': request.data.get('username'),
             'password': request.data.get('password')
@@ -68,7 +68,7 @@ class RegisterView(APIView):
         student = student_serializer.save()
 
         # Combine the response data
-        response_data = {
+        response_data: Dict[str, Any] = {
             'user': user_serializer.data,
             'student': student_serializer.data
         }
@@ -77,7 +77,7 @@ class RegisterView(APIView):
 
     
 class LoginView(APIView):
-    def post(self, request):
+    def post(self, request: HttpRequest) -> Response:
         username = request.data.get('username')
         password = request.data.get('password')
         user = User.objects.filter(username=username).first()
@@ -85,7 +85,7 @@ class LoginView(APIView):
             raise AuthenticationFailed('User not found')
         if not user.check_password(password):
             raise AuthenticationFailed('Incorrect password')
-        payload = {
+        payload: Dict[str, Any] = {
             'id': user.id,
             'exp': datetime.now(timezone.utc) + timedelta(minutes=60),
             'iat': datetime.now(timezone.utc)
@@ -100,7 +100,7 @@ class LoginView(APIView):
             secure=True, 
             expires=datetime.now(timezone.utc) + timedelta(minutes=60)  # Optional: exact expiry time
         )   
-        response.data = {
+        response.data: Dict[str, Any] = {
             'username': user.username,
             'user_id': user.id,
             'jwt': token
@@ -215,13 +215,13 @@ class StudentDashboardView(APIView):
 
 
 
-def prepare_image(image):
+def prepare_image(image: np.ndarray) -> np.ndarray:
     """Optimized image preprocessing"""
     image = cv2.resize(image, (0, 0), fx=0.5, fy=0.5)
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     return image_rgb
 
-def verify_faces(ref_img, uploaded_img, tolerance=0.6):
+def verify_faces(ref_img: np.ndarray, uploaded_img: np.ndarray, tolerance: float = 0.6) -> bool:
     """Face verification using face_recognition"""
     try:
         # Get face encodings
