@@ -52,6 +52,33 @@ from django.db.models import Count, Prefetch
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def handle_view_exceptions(func):
+    """
+    Decorator to handle custom exceptions in View classes.
+    
+    Args:
+        func: The view method to wrap.
+        
+    Returns:
+        Wrapped function that handles exceptions.
+    """
+    def wrapper(request, *args, **kwargs):
+        try:
+            return func(request, *args, **kwargs)
+        except (ValidationError, NotFoundError, DatabaseError) as e:
+            return JsonResponse(
+                e.to_dict(),
+                status=e.status_code
+            )
+        except Exception as e:
+            logger.error(f"Unhandled exception in view: {e}")
+            return JsonResponse(
+                {"error": str(e), "code": 500},
+                status=500
+            )
+    return wrapper
+
+
 class RegisterView(APIView):
     """
     API View for admin user registration.
@@ -437,6 +464,7 @@ class DetailedAttendanceReportView(View):
     student-wise performance, and overall attendance rates.
     """
     
+    @handle_view_exceptions
     def post(self, request) -> JsonResponse:
         """
         Generate detailed attendance report with daily breakdown.
@@ -586,21 +614,14 @@ class DetailedAttendanceReportView(View):
             }, safe=False)
 
         except ValueError:
-            return JsonResponse(
-                {"error": "Invalid date format"}, 
-                status=400
-            )
+            logger.warning("Invalid date format in attendance report")
+            raise ValidationError("Invalid date format")
         except Class.DoesNotExist:
-            return JsonResponse(
-                {"error": "Class not found"}, 
-                status=404
-            )
+            logger.warning(f"Class not found: class_id={class_id}")
+            raise NotFoundError("Class not found")
         except Exception as e:
             logger.error(f"Attendance report error: {e}")
-            return JsonResponse(
-                {"error": str(e)}, 
-                status=500
-            )
+            raise DatabaseError(f"Database error: {str(e)}")
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -612,6 +633,7 @@ class CSVAttendanceExportView(View):
     for a specific class within a date range.
     """
     
+    @handle_view_exceptions
     def post(self, request) -> HttpResponse:
         """
         Export attendance data as CSV file.
@@ -670,18 +692,11 @@ class CSVAttendanceExportView(View):
             return response
             
         except Class.DoesNotExist:
-            return JsonResponse(
-                {"error": "Class not found"}, 
-                status=404
-            )
+            logger.warning(f"Class not found: class_id={class_id}")
+            raise NotFoundError("Class not found")
         except ValueError:
-            return JsonResponse(
-                {"error": "Invalid date format"}, 
-                status=400
-            )
+            logger.warning("Invalid date format in attendance export")
+            raise ValidationError("Invalid date format")
         except Exception as e:
             logger.error(f"Attendance export error: {e}")
-            return JsonResponse(
-                {"error": str(e)}, 
-                status=500
-            )
+            raise DatabaseError(f"Database error: {str(e)}")

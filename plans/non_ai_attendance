@@ -1,0 +1,1596 @@
+# Non-AI Based Attendance System Design Document
+
+## Table of Contents
+1. [Overview](#overview)
+2. [Database Schema Updates](#database-schema-updates)
+3. [API Endpoint Design](#api-endpoint-design)
+4. [Frontend Component Architecture](#frontend-component-architecture)
+5. [Security Considerations](#security-considerations)
+6. [Implementation Roadmap](#implementation-roadmap)
+
+---
+
+## Overview
+
+This document outlines the design for implementing alternative, non-AI based attendance methods to complement or replace the existing face recognition system. The new system will support four authentication methods:
+
+1. **Fingerprint-based attendance** - Using fingerprint scanners
+2. **Password/PIN-based attendance** - Students enter a unique PIN
+3. **QR Code-based attendance** - Students scan a class QR code
+4. **NFC/Card-based attendance** - Using RFID cards or NFC devices
+
+---
+
+## Database Schema Updates
+
+### New Models
+
+#### 1. AttendanceMethod Model
+Tracks which authentication methods are available and enabled for each class.
+
+```python
+class AttendanceMethod(models.Model):
+    FINGERPRINT = 'fingerprint'
+    PIN = 'pin'
+    QR_CODE = 'qr_code'
+    NFC = 'nfc'
+    FACE_RECOGNITION = 'face_recognition'
+    
+    METHOD_CHOICES = [
+        (FINGERPRINT, 'Fingerprint'),
+        (PIN, 'PIN'),
+        (QR_CODE, 'QR Code'),
+        (NFC, 'NFC/Card'),
+        (FACE_RECOGNITION, 'Face Recognition'),
+    ]
+    
+    method_type = models.CharField(
+        max_length=20,
+        choices=METHOD_CHOICES,
+        unique=True
+    )
+    display_name = models.CharField(max_length=50)
+    is_active = models.BooleanField(default=True)
+    description = models.TextField(blank=True)
+    
+    def __str__(self):
+        return self.display_name
+```
+
+#### 2. ClassAttendanceMethod Model
+Links attendance methods to classes with configuration options.
+
+```python
+class ClassAttendanceMethod(models.Model):
+    class_obj = models.ForeignKey(Class, on_delete=models.CASCADE)
+    attendance_method = models.ForeignKey(AttendanceMethod, on_delete=models.CASCADE)
+    is_enabled = models.BooleanField(default=True)
+    priority = models.IntegerField(default=0)  # Lower = higher priority
+    config = models.JSONField(default=dict, blank=True)  # Method-specific config
+    
+    class Meta:
+        unique_together = ['class_obj', 'attendance_method']
+    
+    def __str__(self):
+        return f"{self.class_obj} - {self.attendance_method}"
+```
+
+#### 3. StudentPIN Model
+Stores hashed PINs for students for PIN-based authentication.
+
+```python
+class StudentPIN(models.Model):
+    student = models.OneToOneField(Student, on_delete=models.CASCADE, primary_key=True)
+    pin_hash = models.CharField(max_length=256)  # bcrypt hash
+    pin_salt = models.CharField(max_length=64)  # salt for PIN
+    is_active = models.BooleanField(default=True)
+    failed_attempts = models.IntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    last_changed = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"PIN for {self.student}"
+```
+
+#### 4. ClassSession Model
+Represents an active attendance session for a class.
+
+```python
+class ClassSession(models.Model):
+    class_obj = models.ForeignKey(Class, on_delete=models.CASCADE)
+    scheduled_start = models.DateTimeField()
+    scheduled_end = models.DateTimeField()
+    actual_start = models.DateTimeField(null=True, blank=True)
+    actual_end = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=False)
+    qr_code_secret = models.CharField(max_length=64, blank=True)  # Secret for QR generation
+    qr_code_expires = models.DateTimeField(null=True, blank=True)
+    nfc_tag_id = models.CharField(max_length=64, blank=True)  # NFC tag for this session
+    
+    class Meta:
+        ordering = ['-scheduled_start']
+    
+    def __str__(self):
+        return f"{self.class_obj} - {self.scheduled_start.strftime('%Y-%m-%d %H:%M')}"
+```
+
+#### 5. AttendanceRecord Model (Updated)
+Enhanced to track which method was used for attendance.
+
+```python
+class Attendance(models.Model):
+    # ... existing fields ...
+    method_used = models.ForeignKey(
+        AttendanceMethod, 
+        on_delete=models.SET_NULL, 
+        null=True
+    )
+    session = models.ForeignKey(
+        ClassSession, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True
+    )
+    verification_data = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    device_info = models.CharField(max_length=256, blank=True)
+    
+    class Meta:
+        ordering = ['-date_time']
+```
+
+#### 6. FingerprintTemplate Model
+Stores encrypted fingerprint templates for students.
+
+```python
+class FingerprintTemplate(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    finger_position = models.CharField(max_length=20)  # e.g., 'left_thumb', 'right_index'
+    template_data = models.BinaryField()  # Encrypted fingerprint template
+    template_version = models.IntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['student', 'finger_position']
+    
+    def __str__(self):
+        return f"Fingerprint - {self.student} - {self.finger_position}"
+```
+
+#### 7. NFCCard Model
+Maps NFC card IDs to students.
+
+```python
+class NFCCard(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    card_id = models.CharField(max_length=64, unique=True)
+    card_type = models.CharField(max_length=20, default='RFID')  # RFID, NFC, etc.
+    is_active = models.BooleanField(default=True)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    last_used = models.DateTimeField(null=True, blank=True)
+    
+    def __str__(self):
+        return f"Card {self.card_id} - {self.student}"
+```
+
+#### 8. AttendanceLog Model
+Detailed audit log for all attendance events.
+
+```python
+class AttendanceLog(models.Model):
+    SUCCESS = 'success'
+    FAILED = 'failed'
+    RESULT_CHOICES = [
+        (SUCCESS, 'Success'),
+        (FAILED, 'Failed'),
+    ]
+    
+    student = models.ForeignKey(Student, on_delete=models.SET_NULL, null=True, blank=True)
+    method = models.ForeignKey(AttendanceMethod, on_delete=models.SET_NULL, null=True)
+    session = models.ForeignKey(ClassSession, on_delete=models.SET_NULL, null=True, blank=True)
+    result = models.CharField(max_length=10, choices=RESULT_CHOICES)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    device_info = models.CharField(max_length=256, blank=True)
+    error_message = models.TextField(blank=True)
+    additional_data = models.JSONField(default=dict, blank=True)
+    
+    class Meta:
+        ordering = ['-timestamp']
+    
+    def __str__(self):
+        return f"{self.method} - {self.result} - {self.timestamp}"
+```
+
+### Database Schema Diagram
+
+```mermaid
+erDiagram
+    User ||--o| Student : "can be"
+    User ||--o| Admin : "can be"
+    Student ||--o| Attendance : "has"
+    Student ||--o| StudentPIN : "has"
+    Student ||--o{ FingerprintTemplate : "has"
+    Student ||--o| NFCCard : "has"
+    Class ||--o{ Attendance : "records"
+    Class ||--o{ ClassSession : "has"
+    Class ||--o{ ClassAttendanceMethod : "uses"
+    AttendanceMethod ||--o{ ClassAttendanceMethod : "assigned to"
+    AttendanceMethod ||--o{ Attendance : "used in"
+    AttendanceMethod ||--o{ AttendanceLog : "logged in"
+    ClassSession ||--o{ Attendance : "during"
+    ClassSession ||--o{ AttendanceLog : "during"
+    
+    Student {
+        int user_id PK
+        string first_name
+        string middle_name
+        string last_name
+        int student_class_id FK
+    }
+    
+    Attendance {
+        int id PK
+        string status
+        datetime date_time
+        int student_id FK
+        int method_used_id FK
+        int session_id FK
+    }
+    
+    AttendanceMethod {
+        int id PK
+        string method_type
+        string display_name
+        boolean is_active
+    }
+    
+    ClassSession {
+        int id PK
+        int class_obj_id FK
+        datetime scheduled_start
+        datetime scheduled_end
+        datetime actual_start
+        datetime actual_end
+        boolean is_active
+    }
+    
+    StudentPIN {
+        int student_id PK
+        string pin_hash
+        string pin_salt
+        int failed_attempts
+        datetime locked_until
+    }
+```
+
+---
+
+## API Endpoint Design
+
+### Base URL: `/api/attendance/`
+
+### Authentication Endpoints
+
+#### 1. PIN-based Authentication
+```
+POST /api/attendance/pin/verify
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "pin": "1234",
+    "session_id": 1
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "Attendance marked successfully",
+    "data": {
+        "attendance_id": 456,
+        "student_name": "John Doe",
+        "status": "Present",
+        "method": "pin",
+        "timestamp": "2024-01-15T09:30:00Z"
+    }
+}
+
+Response (400 Bad Request):
+{
+    "success": false,
+    "error": "Invalid PIN",
+    "attempts_remaining": 2
+}
+```
+
+#### 2. QR Code-based Authentication
+```
+GET /api/attendance/qr/generate?class_id=1
+Response (200 OK):
+{
+    "success": true,
+    "data": {
+        "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...",  // Base64 encoded QR
+        "session_id": 1,
+        "expires_at": "2024-01-15T10:30:00Z",
+        "class_name": "Computer Science 101"
+    }
+}
+
+POST /api/attendance/qr/scan
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "qr_data": "eyJjbGFzc19pZCI6MSwic2VjcmV0IjoiYXNkZmFzZGZhc2RmIn0=",
+    "timestamp": "2024-01-15T09:30:00Z"
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "Attendance marked successfully",
+    "data": {
+        "attendance_id": 456,
+        "class_name": "Computer Science 101",
+        "status": "Present",
+        "method": "qr_code"
+    }
+}
+```
+
+#### 3. NFC/Card-based Authentication
+```
+POST /api/attendance/nfc/scan
+Content-Type: application/json
+
+Request:
+{
+    "card_id": "AB12345678",
+    "student_id": 123,  // Optional - can be looked up from card_id
+    "session_id": 1
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "Attendance marked successfully",
+    "data": {
+        "attendance_id": 456,
+        "student_name": "John Doe",
+        "card_type": "RFID",
+        "status": "Present",
+        "method": "nfc"
+    }
+}
+```
+
+#### 4. Fingerprint-based Authentication
+```
+POST /api/attendance/fingerprint/enroll
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "finger_position": "left_thumb",
+    "template_data": "base64_encoded_template_data"
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "Fingerprint enrolled successfully"
+}
+
+POST /api/attendance/fingerprint/verify
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "finger_position": "left_thumb",
+    "template_data": "base64_encoded_template_data",
+    "session_id": 1
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "Attendance marked successfully",
+    "data": {
+        "attendance_id": 456,
+        "status": "Present",
+        "method": "fingerprint"
+    }
+}
+```
+
+### Admin Management Endpoints
+
+#### 5. Method Configuration
+```
+GET /api/attendance/methods/
+Response (200 OK):
+{
+    "success": true,
+    "data": [
+        {"id": 1, "method_type": "fingerprint", "display_name": "Fingerprint", "is_active": true},
+        {"id": 2, "method_type": "pin", "display_name": "PIN", "is_active": true},
+        {"id": 3, "method_type": "qr_code", "display_name": "QR Code", "is_active": true},
+        {"id": 4, "method_type": "nfc", "display_name": "NFC/Card", "is_active": true}
+    ]
+}
+
+PUT /api/attendance/methods/{method_id}/toggle
+Response (200 OK):
+{
+    "success": true,
+    "message": "Method toggled successfully",
+    "is_active": true
+}
+```
+
+#### 6. Class Method Configuration
+```
+GET /api/attendance/classes/{class_id}/methods/
+Response (200 OK):
+{
+    "success": true,
+    "data": {
+        "class_id": 1,
+        "class_name": "Computer Science 101",
+        "methods": [
+            {
+                "method_id": 1,
+                "method_type": "fingerprint",
+                "is_enabled": true,
+                "priority": 1,
+                "config": {}
+            },
+            {
+                "method_id": 2,
+                "method_type": "pin",
+                "is_enabled": true,
+                "priority": 2,
+                "config": {}
+            }
+        ]
+    }
+}
+
+PUT /api/attendance/classes/{class_id}/methods/
+Content-Type: application/json
+
+Request:
+{
+    "methods": [
+        {"method_id": 1, "is_enabled": true, "priority": 1, "config": {}},
+        {"method_id": 2, "is_enabled": false, "priority": 2, "config": {}}
+    ]
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "Class methods updated successfully"
+}
+```
+
+#### 7. PIN Management
+```
+POST /api/attendance/pin/setup
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "new_pin": "1234",
+    "confirm_pin": "1234"
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "PIN set up successfully"
+}
+
+PUT /api/attendance/pin/change
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "current_pin": "1234",
+    "new_pin": "5678",
+    "confirm_pin": "5678"
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "PIN changed successfully"
+}
+```
+
+#### 8. NFC Card Management
+```
+POST /api/attendance/nfc/assign
+Content-Type: application/json
+
+Request:
+{
+    "student_id": 123,
+    "card_id": "AB12345678",
+    "card_type": "RFID"
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "message": "NFC card assigned successfully"
+}
+
+DELETE /api/attendance/nfc/{card_id}/
+Response (200 OK):
+{
+    "success": true,
+    "message": "NFC card removed successfully"
+}
+```
+
+#### 9. Session Management
+```
+POST /api/attendance/sessions/
+Content-Type: application/json
+
+Request:
+{
+    "class_id": 1,
+    "scheduled_start": "2024-01-15T09:00:00Z",
+    "scheduled_end": "2024-01-15T10:30:00Z"
+}
+
+Response (200 OK):
+{
+    "success": true,
+    "data": {
+        "session_id": 1,
+        "class_name": "Computer Science 101",
+        "qr_code_url": "/api/attendance/qr/generate?session_id=1",
+        "nfc_tag_id": "CS101-2024-01-15"
+    }
+}
+
+POST /api/attendance/sessions/{session_id}/start
+Response (200 OK):
+{
+    "success": true,
+    "message": "Session started",
+    "data": {
+        "actual_start": "2024-01-15T09:05:00Z",
+        "is_active": true
+    }
+}
+
+POST /api/attendance/sessions/{session_id}/end
+Response (200 OK):
+{
+    "success": true,
+    "message": "Session ended",
+    "data": {
+        "actual_end": "2024-01-15T10:35:00Z",
+        "is_active": false,
+        "attendance_summary": {
+            "total_students": 30,
+            "present": 28,
+            "absent": 2
+        }
+    }
+}
+```
+
+#### 10. Reporting
+```
+GET /api/attendance/reports/class/{class_id}/
+Response (200 OK):
+{
+    "success": true,
+    "data": {
+        "class_id": 1,
+        "class_name": "Computer Science 101",
+        "sessions": [
+            {
+                "session_id": 1,
+                "date": "2024-01-15",
+                "present_count": 28,
+                "absent_count": 2,
+                "methods_used": {
+                    "fingerprint": 15,
+                    "pin": 8,
+                    "qr_code": 3,
+                    "nfc": 2
+                }
+            }
+        ],
+        "overall_attendance_rate": 93.3
+    }
+}
+
+GET /api/attendance/reports/student/{student_id}/
+Response (200 OK):
+{
+    "success": true,
+    "data": {
+        "student_id": 123,
+        "student_name": "John Doe",
+        "total_sessions": 30,
+        "present": 28,
+        "absent": 2,
+        "methods_used": {
+            "fingerprint": 20,
+            "pin": 5,
+            "qr_code": 3,
+            "nfc": 0
+        }
+    }
+}
+```
+
+---
+
+## Frontend Component Architecture
+
+### Component Structure
+
+```
+frontend/src/
+├── components/
+│   ├── attendance/
+│   │   ├── AttendanceMethodSelector.tsx
+│   │   ├── FingerprintScanner.tsx
+│   │   ├── PINInput.tsx
+│   │   ├── QRScanner.tsx
+│   │   ├── NFCCardReader.tsx
+│   │   ├── AttendanceCard.tsx
+│   │   └── SessionCard.tsx
+│   ├── admin/
+│   │   ├── MethodConfiguration.tsx
+│   │   ├── ClassMethodSettings.tsx
+│   │   ├── SessionManager.tsx
+│   │   ├── PinResetForm.tsx
+│   │   ├── NFCCardManager.tsx
+│   │   └── AttendanceReports.tsx
+│   └── ui/
+│       ├── modal/
+│       ├── tabs/
+│       └── ...
+├── services/
+│   └── attendanceApi.ts
+├── types/
+│   └── attendance.ts
+└── pages/
+    ├── student/
+    │   └── AttendanceCheckIn.tsx
+    └── admin/
+        └── AttendanceSettings.tsx
+```
+
+### Component Details
+
+#### 1. AttendanceMethodSelector
+Allows students to choose their preferred attendance method.
+
+```typescript
+interface AttendanceMethodSelectorProps {
+    enabledMethods: AttendanceMethod[];
+    onMethodSelect: (method: AttendanceMethod) => void;
+    selectedMethod?: AttendanceMethod;
+}
+
+function AttendanceMethodSelector({
+    enabledMethods,
+    onMethodSelect,
+    selectedMethod
+}: AttendanceMethodSelectorProps) {
+    return (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {enabledMethods.map((method) => (
+                <Card
+                    key={method.id}
+                    className={`cursor-pointer transition-all ${
+                        selectedMethod?.id === method.id
+                            ? 'ring-2 ring-primary'
+                            : ''
+                    }`}
+                    onClick={() => onMethodSelect(method)}
+                >
+                    <CardContent className="flex flex-col items-center p-4">
+                        <Icon name={method.icon} size={32} />
+                        <span className="mt-2 font-medium">{method.display_name}</span>
+                    </CardContent>
+                </Card>
+            ))}
+        </div>
+    );
+}
+```
+
+#### 2. PINInput Component
+Secure PIN entry with visibility toggle and auto-submit.
+
+```typescript
+interface PINInputProps {
+    length?: number;
+    onComplete: (pin: string) => void;
+    onCancel?: () => void;
+    error?: string;
+    attemptsRemaining?: number;
+}
+
+function PINInput({
+    length = 4,
+    onComplete,
+    onCancel,
+    error,
+    attemptsRemaining
+}: PINInputProps) {
+    const [pin, setPin] = useState('');
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
+
+    const handleChange = (value: string) => {
+        if (value.length <= length && /^\d*$/.test(value)) {
+            setPin(value);
+            if (value.length === length) {
+                onComplete(value);
+            }
+        }
+    };
+
+    return (
+        <div className="flex flex-col items-center space-y-4">
+            <div className="text-sm text-muted-foreground">
+                Enter your {length}-digit PIN
+            </div>
+            
+            <div className="flex space-x-2">
+                {Array.from({ length }).map((_, index) => (
+                    <Input
+                        key={index}
+                        ref={index === 0 ? inputRef : null}
+                        type="password"
+                        maxLength={1}
+                        value={pin[index] || ''}
+                        onChange={(e) => handleChange(
+                            pin.slice(0, index) + 
+                            e.target.value + 
+                            pin.slice(index + 1)
+                        )}
+                        className="w-12 h-12 text-center text-xl"
+                    />
+                ))}
+            </div>
+
+            {error && (
+                <Alert variant="destructive">
+                    <AlertDescription>{error}</AlertDescription>
+                </Alert>
+            )}
+
+            {attemptsRemaining !== undefined && attemptsRemaining < 3 && (
+                <Alert variant="warning">
+                    <AlertDescription>
+                        {attemptsRemaining} attempts remaining
+                    </AlertDescription>
+                </Alert>
+            )}
+
+            {onCancel && (
+                <Button variant="ghost" onClick={onCancel}>
+                    Cancel
+                </Button>
+            )}
+        </div>
+    );
+}
+```
+
+#### 3. QRScanner Component
+Uses device camera to scan QR codes.
+
+```typescript
+import { Html5Qrcode } from 'html5-qrcode';
+
+interface QRScannerProps {
+    onScan: (data: string) => void;
+    onError?: (error: string) => void;
+    onClose?: () => void;
+}
+
+function QRScanner({ onScan, onError, onClose }: QRScannerProps) {
+    const [isScanning, setIsScanning] = useState(false);
+    const scannerRef = useRef<Html5Qrcode | null>(null);
+
+    const startScanning = async () => {
+        try {
+            const scanner = new Html5Qrcode('qr-reader');
+            scannerRef.current = scanner;
+            
+            await scanner.start(
+                { facingMode: 'environment' },
+                {
+                    fps: 10,
+                    qrbox: { width: 250, height: 250 }
+                },
+                (decodedText) => {
+                    onScan(decodedText);
+                    stopScanning();
+                },
+                () => {} // Ignore scan failures
+            );
+            setIsScanning(true);
+        } catch (err) {
+            onError?.(err as string);
+        }
+    };
+
+    const stopScanning = async () => {
+        if (scannerRef.current) {
+            await scannerRef.current.stop();
+            scannerRef.current = null;
+        }
+        setIsScanning(false);
+    };
+
+    return (
+        <div className="flex flex-col items-center space-y-4">
+            {!isScanning ? (
+                <Button onClick={startScanning}>
+                    <Camera className="mr-2 h-4 w-4" />
+                    Start Scanning
+                </Button>
+            ) : (
+                <>
+                    <div id="qr-reader" className="w-full max-w-sm" />
+                    <Button variant="outline" onClick={stopScanning}>
+                        Stop Scanning
+                    </Button>
+                </>
+            )}
+
+            {onClose && (
+                <Button variant="ghost" onClick={onClose}>
+                    Close
+                </Button>
+            )}
+        </div>
+    );
+}
+```
+
+#### 4. FingerprintScanner Component
+WebAuthn-based fingerprint authentication.
+
+```typescript
+interface FingerprintScannerProps {
+    studentId: number;
+    fingerPosition: 'left_thumb' | 'right_thumb' | 'left_index' | 'right_index';
+    onScan: (result: FingerprintResult) => void;
+    onError?: (error: string) => void;
+}
+
+async function enrollFingerprint(
+    studentId: number,
+    fingerPosition: string
+): Promise<boolean> {
+    // Check if WebAuthn is supported
+    if (!window.PublicKeyCredential) {
+        throw new Error('WebAuthn not supported');
+    }
+
+    // Request registration
+    const credential = await navigator.credentials.create({
+        publicKey: {
+            challenge: generateChallenge(),
+            rp: {
+                name: 'College Attendance System',
+                id: 'attendance.example.com'
+            },
+            user: {
+                id: generateUserId(studentId),
+                name: `student_${studentId}`,
+                displayName: 'Student'
+            },
+            pubKeyCredParams: [
+                { type: 'public-key', alg: -7 },  // ES256
+                { type: 'public-key', alg: -257 } // RS256
+            ],
+            authenticatorSelection: {
+                userVerification: 'preferred',
+                residentKey: 'required'
+            }
+        }
+    });
+
+    // Send credential to server for enrollment
+    return await saveFingerprintTemplate(credential);
+}
+
+async function verifyFingerprint(
+    studentId: number,
+    fingerPosition: string
+): Promise<boolean> {
+    const assertion = await navigator.credentials.get({
+        publicKey: {
+            challenge: generateChallenge(),
+            allowCredentials: [{
+                id: await getCredentialId(studentId),
+                type: 'public-key'
+            }],
+            userVerification: 'preferred'
+        }
+    });
+
+    return await verifyFingerprintAssertion(assertion);
+}
+```
+
+#### 5. NFCCardReader Component
+NFC card reading for supported devices.
+
+```typescript
+interface NFCCardReaderProps {
+    onRead: (cardData: NFCCardData) => void;
+    onError?: (error: string) => void;
+}
+
+async function readNFCCard(
+    onRead: (cardData: NFCCardData) => void,
+    onError?: (error: string) => void
+): Promise<void> {
+    if (!('NDEFReader' in window)) {
+        onError?.('NFC not supported on this device');
+        return;
+    }
+
+    const ndef = new (window as any).NDEFReader();
+
+    try {
+        await ndef.scan();
+        
+        ndef.onreading = (event: any) => {
+            const { serialNumber, message } = event;
+            onRead({
+                cardId: serialNumber,
+                message: message
+            });
+        };
+
+        ndef.onerror = (error: any) => {
+            onError?.(error.message);
+        };
+    } catch (err) {
+        onError?.('Failed to start NFC scan');
+    }
+}
+```
+
+#### 6. Admin Method Configuration
+```typescript
+interface MethodConfigurationProps {
+    classId: number;
+}
+
+function MethodConfiguration({ classId }: MethodConfigurationProps) {
+    const { data: methods, isLoading } = useAttendanceMethods(classId);
+
+    if (isLoading) return <LoadingSpinner />;
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Attendance Methods</CardTitle>
+            </CardHeader>
+            <CardContent>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Method</TableHead>
+                            <TableHead>Enabled</TableHead>
+                            <TableHead>Priority</TableHead>
+                            <TableHead>Actions</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {methods?.map((method) => (
+                            <TableRow key={method.id}>
+                                <TableCell>
+                                    <div className="flex items-center space-x-2">
+                                        <Icon name={method.icon} />
+                                        <span>{method.display_name}</span>
+                                    </div>
+                                </TableCell>
+                                <TableCell>
+                                    <Switch
+                                        checked={method.is_enabled}
+                                        onCheckedChange={(checked) =>
+                                            toggleMethod(method.id, checked)
+                                        }
+                                    />
+                                </TableCell>
+                                <TableCell>
+                                    <Input
+                                        type="number"
+                                        value={method.priority}
+                                        onChange={(e) =>
+                                            updatePriority(
+                                                method.id,
+                                                parseInt(e.target.value)
+                                            )
+                                        }
+                                        className="w-20"
+                                    />
+                                </TableCell>
+                                <TableCell>
+                                    <Button variant="ghost" size="sm">
+                                        <Settings className="h-4 w-4" />
+                                    </Button>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </CardContent>
+        </Card>
+    );
+}
+```
+
+### API Service Layer
+
+```typescript
+// frontend/src/services/attendanceApi.ts
+
+const BASE_URL = 'http://127.0.0.1:8000/api/attendance';
+
+interface AttendanceAPI {
+    // PIN methods
+    verifyPIN(data: PINVerifyRequest): Promise<AttendanceResponse>;
+    setupPIN(data: PINSetupRequest): Promise<APIResponse>;
+    changePIN(data: PINChangeRequest): Promise<APIResponse>;
+
+    // QR methods
+    generateQRCode(classId: number): Promise<QRGenerateResponse>;
+    scanQRCode(data: QRScanRequest): Promise<AttendanceResponse>;
+
+    // NFC methods
+    scanNFCCard(data: NFCScanRequest): Promise<AttendanceResponse>;
+    assignNFCCard(data: NFCAssignRequest): Promise<APIResponse>;
+
+    // Fingerprint methods
+    enrollFingerprint(data: FingerprintEnrollRequest): Promise<APIResponse>;
+    verifyFingerprint(data: FingerprintVerifyRequest): Promise<AttendanceResponse>;
+
+    // Admin methods
+    getClassMethods(classId: number): Promise<ClassMethodsResponse>;
+    updateClassMethods(classId: number, methods: ClassMethodUpdate[]): Promise<APIResponse>;
+    getSessionAttendance(sessionId: number): Promise<SessionAttendanceResponse>;
+}
+
+export const attendanceApi: AttendanceAPI = {
+    async verifyPIN(data) {
+        const response = await axios.post(`${BASE_URL}/pin/verify`, data);
+        return response.data;
+    },
+
+    async setupPIN(data) {
+        const response = await axios.post(`${BASE_URL}/pin/setup`, data);
+        return response.data;
+    },
+
+    async changePIN(data) {
+        const response = await axios.put(`${BASE_URL}/pin/change`, data);
+        return response.data;
+    },
+
+    async generateQRCode(classId) {
+        const response = await axios.get(`${BASE_URL}/qr/generate`, {
+            params: { class_id: classId }
+        });
+        return response.data;
+    },
+
+    async scanQRCode(data) {
+        const response = await axios.post(`${BASE_URL}/qr/scan`, data);
+        return response.data;
+    },
+
+    async scanNFCCard(data) {
+        const response = await axios.post(`${BASE_URL}/nfc/scan`, data);
+        return response.data;
+    },
+
+    async assignNFCCard(data) {
+        const response = await axios.post(`${BASE_URL}/nfc/assign`, data);
+        return response.data;
+    },
+
+    async enrollFingerprint(data) {
+        const response = await axios.post(`${BASE_URL}/fingerprint/enroll`, data);
+        return response.data;
+    },
+
+    async verifyFingerprint(data) {
+        const response = await axios.post(`${BASE_URL}/fingerprint/verify`, data);
+        return response.data;
+    },
+
+    async getClassMethods(classId) {
+        const response = await axios.get(`${BASE_URL}/classes/${classId}/methods`);
+        return response.data;
+    },
+
+    async updateClassMethods(classId, methods) {
+        const response = await axios.put(`${BASE_URL}/classes/${classId}/methods`, {
+            methods
+        });
+        return response.data;
+    },
+
+    async getSessionAttendance(sessionId) {
+        const response = await axios.get(`${BASE_URL}/sessions/${sessionId}/attendance`);
+        return response.data;
+    }
+};
+```
+
+---
+
+## Security Considerations
+
+### 1. PIN-based Attendance
+
+**Threats:**
+- Shoulder surfing (someone watching the PIN entry)
+- PIN guessing/brute force
+- PIN sharing between students
+
+**Mitigations:**
+- Auto-hide PIN after entry
+- Lock account after 5 failed attempts
+- Require PIN change every 30 days
+- Rate limiting on API endpoints
+- Audit logging of all PIN verification attempts
+- Optional: Allow PIN + biometric combination
+
+**Implementation:**
+```python
+class PINValidator:
+    MAX_FAILED_ATTEMPTS = 5
+    LOCKOUT_DURATION = timedelta(minutes=15)
+    
+    @classmethod
+    def validate_pin(cls, student: Student, pin: str) -> tuple[bool, str]:
+        # Check if account is locked
+        if student.studentpin.locked_until:
+            if timezone.now() < student.studentpin.locked_until:
+                return False, "Account is temporarily locked"
+        
+        # Verify PIN
+        if not cls._verify_pin_hash(pin, student.studentpin.pin_hash):
+            cls._handle_failed_attempt(student)
+            return False, "Invalid PIN"
+        
+        # Reset failed attempts on success
+        student.studentpin.failed_attempts = 0
+        student.studentpin.save()
+        return True, "PIN verified"
+    
+    @classmethod
+    def _handle_failed_attempt(cls, student: Student):
+        student.studentpin.failed_attempts += 1
+        
+        if student.studentpin.failed_attempts >= cls.MAX_FAILED_ATTEMPTS:
+            student.studentpin.locked_until = timezone.now() + cls.LOCKOUT_DURATION
+        
+        student.studentpin.save()
+```
+
+### 2. QR Code-based Attendance
+
+**Threats:**
+- QR code screenshot sharing
+- QR code replay attacks
+- QR code forgery
+
+**Mitigations:**
+- Use short-lived QR codes (5-10 minute expiration)
+- Include session-specific secret in QR data
+- Bind QR code to device/IP address
+- Use HMAC for QR code generation
+- Monitor for unusual scan patterns
+
+**Implementation:**
+```python
+import secrets
+import hashlib
+import hmac
+from django.conf import settings
+
+class QRCodeGenerator:
+    SECRET_KEY = settings.QR_SECRET_KEY
+    EXPIRY_MINUTES = 10
+    
+    @classmethod
+    def generate_qr_data(cls, session_id: int) -> dict:
+        secret = secrets.token_hex(16)
+        expiry = timezone.now() + timedelta(minutes=cls.EXPIRY_MINUTES)
+        
+        # Create HMAC signature
+        message = f"{session_id}:{secret}:{expiry.timestamp()}"
+        signature = hmac.new(
+            cls.SECRET_KEY.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        qr_data = {
+            'session_id': session_id,
+            'secret': secret,
+            'expires': expiry.isoformat(),
+            'signature': signature
+        }
+        
+        return {
+            'qr_data': base64.b64encode(json.dumps(qr_data).encode()).decode(),
+            'expires_at': expiry
+        }
+    
+    @classmethod
+    def verify_qr_data(cls, qr_data: str, session_id: int) -> bool:
+        try:
+            data = json.loads(base64.b64decode(qr_data))
+            
+            # Check expiration
+            expires = datetime.fromisoformat(data['expires'])
+            if timezone.now() > expires:
+                return False
+            
+            # Verify signature
+            message = f"{session_id}:{data['secret']}:{expires.timestamp()}"
+            expected_signature = hmac.new(
+                cls.SECRET_KEY.encode(),
+                message.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            
+            return hmac.compare_digest(data['signature'], expected_signature)
+        except Exception:
+            return False
+```
+
+### 3. NFC/Card-based Attendance
+
+**Threats:**
+- Card cloning/copying
+- Card sharing
+- Lost/stolen cards
+
+**Mitigations:**
+- Use encrypted cards with secure authentication
+- Implement card validation protocol
+- Log all card scans with location/timestamp
+- Require card + PIN combination for high-security classes
+- Implement card deactivation/replacement workflow
+- Use rolling codes for card authentication
+
+**Implementation:**
+```python
+class NFCSecureAuthenticator:
+    MASTER_KEY = settings.NFC_MASTER_KEY
+    
+    @classmethod
+    def authenticate_card(cls, card_id: str, session_nonce: str) -> bool:
+        try:
+            # Get card's current counter
+            card_record = NFCCard.objects.get(card_id=card_id)
+            
+            if not card_record.is_active:
+                return False
+            
+            # Generate expected response
+            challenge = f"{session_nonce}:{card_record.last_used or 0}"
+            expected_response = cls._generate_response(card_id, challenge)
+            
+            # In a real implementation, the card would compute this response
+            # For now, we simulate with a database check
+            return True  # Placeholder for actual card authentication
+        
+        except NFCCard.DoesNotExist:
+            return False
+    
+    @classmethod
+    def _generate_response(cls, card_id: str, challenge: str) -> str:
+        return hashlib.sha256(
+            f"{cls.MASTER_KEY}:{card_id}:{challenge}".encode()
+        ).hexdigest()
+```
+
+### 4. Fingerprint-based Attendance
+
+**Threats:**
+- Fingerprint template theft
+- Fake fingerprint (gummy fingers)
+- Fingerprint replay attacks
+
+**Mitigations:**
+- Store encrypted templates only
+- Use liveness detection (if supported by scanner)
+- Store templates on secure element (if available)
+- Use one-way transformation for template storage
+- WebAuthn for browser-based fingerprint
+
+**Implementation:**
+```python
+import os
+from cryptography.fernet import Fernet
+
+class FingerprintTemplateManager:
+    ENCRYPTION_KEY = settings.FINGERPRINT_ENCRYPTION_KEY
+    
+    @classmethod
+    def encrypt_template(cls, template_data: bytes) -> bytes:
+        f = Fernet(cls.ENCRYPTION_KEY)
+        return f.encrypt(template_data)
+    
+    @classmethod
+    def decrypt_template(cls, encrypted_data: bytes) -> bytes:
+        f = Fernet(cls.ENCRYPTION_KEY)
+        return f.decrypt(encrypted_data)
+    
+    @classmethod
+    def store_template(cls, student: Student, template_data: bytes, finger_position: str):
+        encrypted = cls.encrypt_template(template_data)
+        
+        FingerprintTemplate.objects.update_or_create(
+            student=student,
+            finger_position=finger_position,
+            defaults={
+                'template_data': encrypted,
+                'is_active': True
+            }
+        )
+```
+
+### 5. General Security Measures
+
+**Rate Limiting:**
+```python
+# settings.py
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+        'attendance': '10/minute'
+    }
+}
+```
+
+**IP-based Logging:**
+```python
+def log_attendance_attempt(
+    student: Student,
+    method: AttendanceMethod,
+    result: str,
+    request: HttpRequest
+):
+    AttendanceLog.objects.create(
+        student=student,
+        method=method,
+        result=result,
+        ip_address=get_client_ip(request),
+        device_info=request.META.get('HTTP_USER_AGENT', ''),
+        additional_data={
+            'timestamp': timezone.now().isoformat(),
+            'endpoint': request.path
+        }
+    )
+```
+
+**Session Security:**
+- All attendance sessions have unique secrets
+- QR codes expire after configurable time
+- Sessions can only be marked active once
+- Automatic session closure at scheduled end time
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: Foundation (Week 1)
+
+1. **Database Migration**
+   - Create new models (AttendanceMethod, ClassAttendanceMethod, ClassSession)
+   - Create migration files
+   - Set up initial data for attendance methods
+
+2. **Core API Setup**
+   - Create base API views for attendance methods
+   - Implement authentication middleware
+   - Set up rate limiting
+
+3. **PIN System**
+   - StudentPIN model and API
+   - PIN verification endpoint
+   - PIN setup/change endpoints
+   - Frontend PIN input component
+
+### Phase 2: QR Code System (Week 2)
+
+1. **QR Code Generation**
+   - QR code generation service
+   - Session-based QR with expiration
+   - QR verification endpoint
+
+2. **QR Frontend Components**
+   - QR scanner component using html5-qrcode
+   - QR display component for admin
+   - Student attendance capture flow
+
+3. **Admin QR Controls**
+   - Generate QR for class session
+   - Display QR code on classroom screen
+   - Session management UI
+
+### Phase 3: NFC/Card System (Week 3)
+
+1. **NFC Infrastructure**
+   - NFCCard model
+   - Card assignment endpoints
+   - Card scanning endpoint
+
+2. **NFC Frontend**
+   - NFC reader component (Web NFC API)
+   - Admin card management UI
+   - Student card registration flow
+
+3. **Card Management**
+   - Card assignment workflow
+   - Card deactivation
+   - Lost card replacement process
+
+### Phase 4: Fingerprint System (Week 4)
+
+1. **Fingerprint Integration**
+   - FingerprintTemplate model
+   - WebAuthn integration for browser
+   - Enrollment endpoint
+   - Verification endpoint
+
+2. **Fingerprint Frontend**
+   - Fingerprint enrollment UI
+   - Fingerprint verification component
+   - Admin fingerprint management
+
+3. **Security Hardening**
+   - Template encryption
+   - Liveness detection (if supported)
+   - Fallback methods
+
+### Phase 5: Admin Controls & Reporting (Week 5)
+
+1. **Method Configuration**
+   - Admin UI for method management
+   - Per-class method settings
+   - Priority configuration
+
+2. **Session Management**
+   - Session creation UI
+   - Session monitoring dashboard
+   - Real-time attendance tracking
+
+3. **Reporting**
+   - Attendance reports by class
+   - Attendance reports by student
+   - Method usage statistics
+   - Export functionality (PDF, CSV)
+
+### Phase 6: Integration & Testing (Week 6)
+
+1. **System Integration**
+   - Integrate all methods into student dashboard
+   - Method selection UI
+   - Fallback mechanism (if primary method fails)
+
+2. **Security Testing**
+   - Penetration testing
+   - Vulnerability assessment
+   - Performance testing
+
+3. **User Acceptance Testing**
+   - Student testing
+   - Admin testing
+   - Faculty feedback collection
+
+### Phase 7: Deployment & Documentation (Week 7)
+
+1. **Deployment**
+   - Production deployment
+   - Database migration
+   - SSL configuration
+   - Monitoring setup
+
+2. **Documentation**
+   - API documentation (Swagger/OpenAPI)
+   - User guides
+   - Admin documentation
+   - Security documentation
+
+3. **Training**
+   - Admin training sessions
+   - Student orientation materials
+   - Support documentation
+
+### Dependencies
+
+```mermaid
+graph TD
+    A[Database Models] --> B[PIN System]
+    A --> C[QR Code System]
+    A --> D[NFC System]
+    A --> E[Fingerprint System]
+    
+    B --> F[Admin Configuration]
+    C --> F
+    D --> F
+    E --> F
+    
+    F --> G[Reporting]
+    
+    B --> H[Student Dashboard]
+    C --> H
+    D --> H
+    E --> H
+    
+    H --> I[Integration Testing]
+    F --> I
+    G --> I
+```
+
+### Risk Assessment
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| QR code sharing | High | Short expiration, device binding |
+| PIN shoulder surfing | Medium | Hide PIN input, offer alternative methods |
+| NFC card cloning | Medium | Use encrypted cards, add PIN verification |
+| Fingerprint template theft | High | Encrypt templates, use secure storage |
+| System downtime | Medium | Multiple methods ensure redundancy |
+| User adoption | Medium | Training sessions, clear documentation |
+
+---
+
+## Conclusion
+
+This design provides a comprehensive non-AI based attendance system that offers multiple authentication methods to ensure reliability and flexibility. The system includes:
+
+1. **Multiple authentication methods** - PIN, QR, NFC, and fingerprint options
+2. **Robust security measures** - Encryption, rate limiting, audit logging
+3. **Admin controls** - Method configuration per class, session management
+4. **Mobile-friendly design** - Responsive components, Web NFC support
+5. **Comprehensive reporting** - Attendance reports, method usage statistics
+
+The phased implementation approach allows for gradual rollout and testing, minimizing risk while ensuring each component is thoroughly validated before moving to the next phase.
