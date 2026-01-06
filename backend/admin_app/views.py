@@ -17,9 +17,11 @@ from django.utils.dateparse import parse_date
 import json
 import csv
 import logging
-import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
+
+# Third-party libraries
+import jwt
 
 # Django REST framework imports
 from rest_framework import status, generics
@@ -29,6 +31,12 @@ from rest_framework.exceptions import AuthenticationFailed
 
 # App models and serializers
 from api.models import Admin, Class, Student, Attendance
+from api.exceptions import (
+    AuthenticationError,
+    ValidationError,
+    NotFoundError,
+    DatabaseError
+)
 from .serializers import (
     UserSerializer,
     ClassSerializer,
@@ -362,106 +370,7 @@ class AttendanceUpdateView(generics.RetrieveUpdateAPIView):
     lookup_field: str = "attendance_id"
 
 
-class AttendanceReportView(APIView):
-    """
-    API View for generating attendance reports.
-    """
-    
-    def post(self, request) -> Response:
-        """
-        Generate attendance report for a class within a date range.
-        
-        Args:
-            request: HTTP request with classId, startDate, and endDate.
-            
-        Returns:
-            Response with attendance report data.
-        """
-        class_id: int | None = request.data.get("classId")
-        start_date = parse_date(request.data.get("startDate"))
-        end_date = parse_date(request.data.get("endDate"))
-        
-        if not class_id or not start_date or not end_date:
-            return Response(
-                {"error": "Missing parameters"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
-        try:
-            class_obj: Class = Class.objects.get(id=class_id)
-        except Class.DoesNotExist:
-            return Response(
-                {"error": "Class not found"}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        students: List[Student] = list(
-            Student.objects.filter(student_class=class_obj)
-        )
-        
-        attendance_records: List[Attendance] = list(
-            Attendance.objects.filter(
-                student__in=students,
-                date_time__date__range=(start_date, end_date)
-            )
-        )
-
-        report: List[Dict[str, Any]] = []
-        
-        for student in students:
-            student_records: List[Attendance] = [
-                att for att in attendance_records if att.student == student
-            ]
-            total: int = len(student_records)
-            present: int = sum(1 for att in student_records if att.status == 'Present')
-            absent: int = sum(1 for att in student_records if att.status == 'Absent')
-            late: int = sum(1 for att in student_records if att.status == 'Late')
-            attendance_rate: float = (present / total * 100) if total else 0
-
-            report.append({
-                "student": (
-                    f"{student.first_name} "
-                    f"{student.middle_name or ''} "
-                    f"{student.last_name}"
-                ).strip(),
-                "totalRecords": total,
-                "present": present,
-                "absent": absent,
-                "late": late,
-                "attendanceRate": round(attendance_rate, 2),
-            })
-
-        total_records: int = len(attendance_records)
-        total_present: int = sum(
-            1 for att in attendance_records if att.status == 'Present'
-        )
-        total_absent: int = sum(
-            1 for att in attendance_records if att.status == 'Absent'
-        )
-        total_late: int = sum(
-            1 for att in attendance_records if att.status == 'Late'
-        )
-
-        overall_rate: float = (
-            (total_present / total_records * 100) if total_records else 0
-        )
-
-        return Response({
-            "class": f"{class_obj.name} - {class_obj.section}",
-            "semester": class_obj.semester,
-            "year": class_obj.year,
-            "dateRange": {
-                "start": start_date,
-                "end": end_date
-            },
-            "totalStudents": len(students),
-            "totalRecords": total_records,
-            "present": total_present,
-            "absent": total_absent,
-            "late": total_late,
-            "overallAttendanceRate": round(overall_rate, 2),
-            "studentReport": report
-        }, status=status.HTTP_200_OK)
 
 
 class RecentAttendanceView(View):
