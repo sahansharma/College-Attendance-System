@@ -464,27 +464,6 @@ class AttendanceReportView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class AttendanceExportView(APIView):
-    """
-    API View for exporting attendance data.
-    """
-    
-    def post(self, request) -> Response:
-        """
-        Export attendance data (placeholder).
-        
-        Args:
-            request: HTTP request.
-            
-        Returns:
-            Response indicating export functionality.
-        """
-        return Response(
-            {"message": "Export functionality not implemented yet"},
-            status=status.HTTP_200_OK
-        )
-
-
 class RecentAttendanceView(View):
     """
     View for retrieving recent attendance records.
@@ -541,9 +520,12 @@ class AttendanceTrendView(View):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class AttendanceReportView(View):
+class DetailedAttendanceReportView(View):
     """
-    View for generating detailed attendance reports.
+    View for generating detailed attendance reports with daily breakdown.
+    
+    Provides comprehensive attendance analysis including daily statistics,
+    student-wise performance, and overall attendance rates.
     """
     
     def post(self, request) -> JsonResponse:
@@ -713,9 +695,12 @@ class AttendanceReportView(View):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
-class AttendanceExportView(View):
+class CSVAttendanceExportView(View):
     """
-    View for exporting attendance data to CSV.
+    View for exporting attendance data to CSV file.
+    
+    Generates and downloads a CSV file containing attendance records
+    for a specific class within a date range.
     """
     
     def post(self, request) -> HttpResponse:
