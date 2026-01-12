@@ -5,7 +5,7 @@ from .views import (
     ClassListView, ClassCreateView, ClassUpdateView, ClassDeleteView,
     StudentListView, StudentCountView, ClassCountView,
     AttendanceListView, AttendanceUpdateView,
-    AttendanceReportView, AttendanceExportView,
+    DetailedAttendanceReportView, CSVAttendanceExportView,
     RecentAttendanceView, AttendanceTrendView, StudentCreateView,
     StudentUpdateView, StudentDeleteView
 )
@@ -39,6 +39,6 @@ urlpatterns = [
     path('attendance/trend/', AttendanceTrendView.as_view(), name='attendance-trend'),  # GET: Attendance trends
 
     # Reports
-    path('reports/attendance/', AttendanceReportView.as_view(), name='attendance-report'),  # POST: Generate attendance report
-    path('reports/export/', AttendanceExportView.as_view(), name='attendance-export'),  # POST: Export attendance report,
+    path('reports/attendance/', DetailedAttendanceReportView.as_view(), name='attendance-report'),  # POST: Generate attendance report
+    path('reports/export/', CSVAttendanceExportView.as_view(), name='attendance-export'),  # POST: Export attendance report,
 ]

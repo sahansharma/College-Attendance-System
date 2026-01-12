@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Optional
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
+import datetime
 
 if TYPE_CHECKING:
     from .models import Role, Admin, Class, Student
@@ -70,7 +71,7 @@ class Attendance(models.Model):
         (LATE, 'Late'),
     ]
     status: str = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PRESENT)
-    date_time: models.DateTime = models.DateTimeField(default=timezone.now)
+    date_time: datetime.datetime = models.DateTimeField(default=timezone.now)
     student: 'Student' = models.ForeignKey(Student, on_delete=models.CASCADE)
     method: Optional['AttendanceMethod'] = models.ForeignKey(
         'AttendanceMethod', 
@@ -113,8 +114,8 @@ class AttendanceMethod(models.Model):
     )
     description: str = models.TextField(blank=True, null=True)
     is_active: bool = models.BooleanField(default=True)
-    created_at: models.DateTime = models.DateTimeField(auto_now_add=True)
-    updated_at: models.DateTime = models.DateTimeField(auto_now=True)
+    created_at: datetime.datetime = models.DateTimeField(auto_now_add=True)
+    updated_at: datetime.datetime = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'api_attendancemethod'
@@ -145,8 +146,8 @@ class ClassAttendanceMethod(models.Model):
     )
     is_required: bool = models.BooleanField(default=False)
     config: dict = models.JSONField(default=dict, blank=True)
-    created_at: models.DateTime = models.DateTimeField(auto_now_add=True)
-    updated_at: models.DateTime = models.DateTimeField(auto_now=True)
+    created_at: datetime.datetime = models.DateTimeField(auto_now_add=True)
+    updated_at: datetime.datetime = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'api_classattendancemethod'
@@ -175,10 +176,10 @@ class StudentPIN(models.Model):
     )
     pin_hash: str = models.CharField(max_length=255)
     failed_attempts: int = models.IntegerField(default=0)
-    locked_until: Optional[models.DateTime] = models.DateTimeField(null=True, blank=True)
+    locked_until: Optional[datetime.datetime] = models.DateTimeField(null=True, blank=True)
     is_set: bool = models.BooleanField(default=False)
-    created_at: models.DateTime = models.DateTimeField(auto_now_add=True)
-    updated_at: models.DateTime = models.DateTimeField(auto_now=True)
+    created_at: datetime.datetime = models.DateTimeField(auto_now_add=True)
+    updated_at: datetime.datetime = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'api_studentpin'
@@ -212,8 +213,8 @@ class ClassSession(models.Model):
         related_name='sessions'
     )
     session_code: str = models.CharField(max_length=10, unique=True, db_index=True)
-    started_at: models.DateTime = models.DateTimeField(default=timezone.now)
-    expires_at: models.DateTime = models.DateTimeField()
+    started_at: datetime.datetime = models.DateTimeField(default=timezone.now)
+    expires_at: datetime.datetime = models.DateTimeField()
     is_active: bool = models.BooleanField(default=True)
     created_by: Optional['Admin'] = models.ForeignKey(
         Admin, 
@@ -253,8 +254,8 @@ class NFCCard(models.Model):
     )
     card_uid: str = models.CharField(max_length=64, unique=True, db_index=True)
     is_active: bool = models.BooleanField(default=True)
-    issued_at: models.DateTime = models.DateTimeField(default=timezone.now)
-    expires_at: Optional[models.DateTime] = models.DateTimeField(null=True, blank=True)
+    issued_at: datetime.datetime = models.DateTimeField(default=timezone.now)
+    expires_at: Optional[datetime.datetime] = models.DateTimeField(null=True, blank=True)
     
     class Meta:
         db_table = 'api_nfccard'
@@ -305,7 +306,7 @@ class AttendanceLog(models.Model):
         related_name='attendance_logs'
     )
     details: dict = models.JSONField(default=dict, blank=True)
-    timestamp: models.DateTime = models.DateTimeField(default=timezone.now, db_index=True)
+    timestamp: datetime.datetime = models.DateTimeField(default=timezone.now, db_index=True)
     success: bool = models.BooleanField(default=True)
     ip_address: Optional[str] = models.CharField(max_length=45, null=True, blank=True)
     device_info: Optional[str] = models.TextField(null=True, blank=True)
