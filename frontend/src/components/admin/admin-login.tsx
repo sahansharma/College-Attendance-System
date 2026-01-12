@@ -14,14 +14,14 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { useState } from "react";
 
-const URL = "http://127.0.0.1:8000/adminuser/login";
+const URL = "http://127.0.0.1:8000/admin_app/login";
 
-export default function AdminLoginForm({ className, ...props }: { className?: string; [key: string]: any }) {
+export default function AdminLoginForm({ className, ...props }: { className?: string;[key: string]: any }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
 
-  
+
   const handleLogin = async (e: React.SyntheticEvent) => {
     e.preventDefault();
 
@@ -42,48 +42,48 @@ export default function AdminLoginForm({ className, ...props }: { className?: st
 
   return (
     <>
-    <div className="w-screen">
-    </div>
-    <div className={cn("flex justify-center items-center gap-6 min-h-screen", className)} {...props}>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-2xl">Admin Login</CardTitle>
-          <CardDescription>
-            Enter your credentials to access admin account
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin}>
-            <div className="flex flex-col gap-6">
-              <div className="grid gap-2">
-                <Label htmlFor="email" className="flex items-center" >Username</Label>
-                <Input
-                  id="email"
-                  type="text"
-                  placeholder=""
-                  required
-                  onChange={(e) => setUsername(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <div className="flex items-center">
-                  <Label htmlFor="password">Password</Label>
+      <div className="w-screen">
+      </div>
+      <div className={cn("flex justify-center items-center gap-6 min-h-screen", className)} {...props}>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-2xl">Admin Login</CardTitle>
+            <CardDescription>
+              Enter your credentials to access admin account
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin}>
+              <div className="flex flex-col gap-6">
+                <div className="grid gap-2">
+                  <Label htmlFor="email" className="flex items-center" >Username</Label>
+                  <Input
+                    id="email"
+                    type="text"
+                    placeholder=""
+                    required
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
                 </div>
-                <Input
-                  id="password"
-                  type="password"
-                  required
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+                <div className="grid gap-2">
+                  <div className="flex items-center">
+                    <Label htmlFor="password">Password</Label>
+                  </div>
+                  <Input
+                    id="password"
+                    type="password"
+                    required
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" className="w-full">
+                  Login
+                </Button>
               </div>
-              <Button type="submit" className="w-full">
-                Login
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </>
   );
 }

@@ -5,9 +5,10 @@ from django.core.files import File
 from django.contrib.auth.hashers import make_password
 
 from api.models import User, Admin, Class, Student, Attendance
+from admin_app.models import AdminUser
 
 # Image path (adjust this if needed)
-STUDENT_IMAGE_PATH = r'C:\Users\sahan\one_dr_file\Documents\clg_prj\backend\student_images\temp_image.jpg'
+STUDENT_IMAGE_PATH = '/home/kali/Documents/Github/College-Attendance-System/backend/temp_image.jpg'
 
 # Nepali-style sample names (first, middle, last)
 nepali_names = [
@@ -56,20 +57,23 @@ def create_students(classes):
                 }
             )
             if created:
-                with open(STUDENT_IMAGE_PATH, 'rb') as img_file:
-                    django_file = File(img_file)
-                    student = Student(
-                        user=user,
-                        first_name=first,
-                        middle_name=middle,
-                        last_name=last,
-                        student_class=cls,
-                    )
-                    student.student_img.save(f"{username}.jpg", django_file, save=True)
-                students_created += 1
-    print(f"Created {students_created} new students.")
+                try:
+                    with open(STUDENT_IMAGE_PATH, 'rb') as img_file:
+                        django_file = File(img_file)
+                        student = Student(
+                            user=user,
+                            first_name=first,
+                            middle_name=middle,
+                            last_name=last,
+                            student_class=cls,
+                        )
+                        student.student_img.save(f"{username}.jpg", django_file, save=True)
+                    students_created += 1
+                except Exception as e:
+                    print(f"Error creating student image for {username}: {e}")
+    print(f"Created {students_created} new students.", flush=True)
 
-def generate_attendance(months_back=3):
+def generate_attendance(months_back=1): # Reduced to 1 month for speed
     status_choices = ['Present', 'Absent', 'Late']
     status_weights = [0.8, 0.15, 0.05]
     end_date = timezone.now().date()
@@ -83,7 +87,7 @@ def generate_attendance(months_back=3):
             if day.weekday() < 5:
                 yield day
 
-    total_records = 0
+    attendance_list = []
     for student in students:
         for single_date in daterange(start_date, end_date):
             exists = Attendance.objects.filter(student=student, date_time__date=single_date).exists()
@@ -92,22 +96,57 @@ def generate_attendance(months_back=3):
             hour = random.randint(8, 15)
             minute = random.randint(0, 59)
             attendance_datetime = datetime.combine(single_date, datetime.min.time()).replace(hour=hour, minute=minute)
+            # Make it aware if settings specify it
+            attendance_datetime = timezone.make_aware(attendance_datetime)
+            
             status = random.choices(status_choices, weights=status_weights, k=1)[0]
-            Attendance.objects.create(
+            attendance_list.append(Attendance(
                 student=student,
                 status=status,
                 date_time=attendance_datetime
-            )
-            total_records += 1
-    print(f"Created {total_records} attendance records for {students.count()} students.")
+            ))
+    
+    if attendance_list:
+        Attendance.objects.bulk_create(attendance_list)
+    print(f"Created {len(attendance_list)} attendance records for {students.count()} students.", flush=True)
 
 def run_all():
-    try:
-        admin = Admin.objects.get(pk=6)
-    except Admin.DoesNotExist:
-        print("Admin with pk=6 does not exist. Please check.")
-        return
+    from api.models import Role
+    admin_role, _ = Role.objects.get_or_create(name='Admin')
+    
+    admin_user, created = User.objects.get_or_create(
+        username='admin',
+        defaults={
+            'name': 'Default Admin',
+            'password': make_password('admin123'),
+            'is_staff': True,
+            'is_superuser': True
+        }
+    )
+    
+    admin, _ = Admin.objects.get_or_create(
+        user=admin_user,
+        defaults={
+            'role': admin_role,
+            'first_name': 'Default',
+            'last_name': 'Admin'
+        }
+    )
 
+    # Also create for admin_app
+    admin_app_user, created = AdminUser.objects.get_or_create(
+        username='admin',
+        defaults={
+            'name': 'Default Admin',
+            'password': make_password('admin123'),
+            'is_staff': True,
+            'is_superuser': True
+        }
+    )
+    if not created:
+        admin_app_user.password = make_password('admin123')
+        admin_app_user.save()
+    
     classes = create_classes(admin)
     create_students(classes)
     generate_attendance()
