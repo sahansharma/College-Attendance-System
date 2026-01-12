@@ -8,19 +8,27 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 export function DatePicker({
   selected,
   onSelect,
+  placeholder = "Pick a date",
+  className,
 }: {
   selected: Date
   onSelect: (date: Date | undefined) => void
+  placeholder?: string
+  className?: string
 }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button
           variant={"outline"}
-          className={cn("w-[200px] justify-start text-left font-normal", !selected && "text-muted-foreground")}
+          className={cn(
+            "w-[200px] justify-start text-left font-normal",
+            !selected && "text-muted-foreground",
+            className
+          )}
         >
           <CalendarIcon className="mr-2 h-4 w-4" />
-          {selected ? format(selected, "PPP") : <span>Pick a date</span>}
+          {selected ? format(selected, "PPP") : <span>{placeholder}</span>}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
