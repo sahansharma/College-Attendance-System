@@ -4,7 +4,7 @@ const BASE_URL = "http://127.0.0.1:8000";
 
 
 export const fetchData = async () => {
-  const response = await fetch(`${BASE_URL}/api/`); 
+  const response = await fetch(`${BASE_URL}/api/`);
   const data = await response.json();
   return data;
   // return response.data;
@@ -26,7 +26,7 @@ export const getStudents = async () => {
   return data;
 };
 
-export const getStudentById = async (student_id) => {
+export const getStudentById = async (student_id: number | string) => {
   const response = await fetch(`${BASE_URL}/students/${student_id}/`);
   const data = await response.json();
   return data;
@@ -38,22 +38,22 @@ export const getClasses = async () => {
   return data;
 };
 
-export const getClassById = async (class_id) => {
+export const getClassById = async (class_id: number | string) => {
   const response = await fetch(`${BASE_URL}/classes/${class_id}/`);
   const data = await response.json();
   return data;
 };
 
-export const getStudentDashboard = async (user_id) => {
+export const getStudentDashboard = async (user_id: number | string) => {
   const response = await fetch(`${BASE_URL}/api/student_dashboard/${user_id}/`);
   const data = await response.json();
   return data;
 };
 
 
-export const verifyStudentIdentity = async (user_id, imageFile) => {
+export const verifyStudentIdentity = async (user_id: number | string, imageFile: File | Blob) => {
   const formData = new FormData();
-  formData.append("user_id", user_id);
+  formData.append("user_id", String(user_id));
   formData.append("image", imageFile);
 
   const response = await fetch(`${BASE_URL}/api/verify_student_identity/`, {
