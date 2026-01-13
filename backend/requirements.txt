@@ -276,7 +276,7 @@ PyQt6_sip==13.10.0
 pyqtgraph==0.13.7
 pyregfi==1.0.1.0
 PySocks==1.7.1
-pytest==8.3.5
+pytest==9.0.2
 python-apt==3.0.0
 python-dateutil==2.9.0
 python-docx==1.2.0
