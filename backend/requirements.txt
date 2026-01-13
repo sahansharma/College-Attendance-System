@@ -104,7 +104,7 @@ duckpy==3.2.0
 easygui==0.98.1
 elastic-transport==9.1.0
 elasticsearch==9.1.0
-email_validator==2.2.0
+email_validator==2.3.0
 ephem==4.2
 et_xmlfile==2.0.0
 ExifRead==3.0.0
